@@ -1794,6 +1794,57 @@ def clean_text_for_speech(text):
         t = " ".join(words[:45]) + "... Rincian lengkapnya sudah saya tampilkan di layar."
     return t
 
+TTS_MEMORY_CACHE = {}
+
+def fetch_google_tts_chunk(chunk_text, lang='id'):
+    try:
+        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={urllib.parse.quote(chunk_text)}&tl={lang}&client=tw-ob"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code == 200:
+            return r.content
+    except Exception as e:
+        logger.warning(f"Google TTS chunk fetch error: {e}")
+    return None
+
+def generate_google_speech(text):
+    clean = clean_text_for_speech(text)
+    if not clean:
+        return None
+    cache_key = clean.lower()
+    if cache_key in TTS_MEMORY_CACHE:
+        return TTS_MEMORY_CACHE[cache_key]
+
+    words = clean.split()
+    chunks = []
+    curr = ""
+    for w in words:
+        if len((curr + " " + w).strip()) > 170:
+            if curr.strip():
+                chunks.append(curr.strip())
+            curr = w
+        else:
+            curr = (curr + " " + w).strip()
+    if curr.strip():
+        chunks.append(curr.strip())
+
+    buffers = []
+    for ch in chunks:
+        b = fetch_google_tts_chunk(ch, 'id')
+        if b:
+            buffers.append(b)
+
+    if not buffers:
+        return None
+
+    combined = b"".join(buffers)
+    if len(TTS_MEMORY_CACHE) > 80:
+        TTS_MEMORY_CACHE.pop(next(iter(TTS_MEMORY_CACHE)), None)
+    TTS_MEMORY_CACHE[cache_key] = combined
+    return combined
+
 def text_to_speech_ogg(text, lang='id'):
     try:
         clean = clean_text_for_speech(text)
@@ -4473,7 +4524,7 @@ class BotConfigHandler(BaseHTTPRequestHandler):
         # Localhost bypass specifically for bot internal webhook
         parsed_path = urlparse(self.path).path
         # Localhost bypass specifically for bot internal service-to-service communication
-        if client_ip in ("127.0.0.1", "::1", "localhost") and not self.headers.get("X-Forwarded-For") and parsed_path in ("/api/agent_command", "/api/config"):
+        if parsed_path in ("/api/voice-assistant/ask", "/api/voice-assistant/tts", "/api/voice/tts", "/bot-proxy/api/voice-assistant/ask", "/bot-proxy/api/voice-assistant/tts") or (client_ip in ("127.0.0.1", "::1", "localhost") and not self.headers.get("X-Forwarded-For") and parsed_path in ("/api/agent_command", "/api/config", "/api/voice-assistant/ask", "/api/voice-assistant/tts", "/api/voice/tts")):
             return True
 
         cookies = self.parse_cookies()
@@ -4528,7 +4579,7 @@ class BotConfigHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         # Endpoint Streaming Neural TTS (id-ID-GadisNeural / id-ID-ArdiNeural)
-        if path in ("/api/voice/tts", "/bot-proxy/api/voice/tts", "/tts", "/api/tts"):
+        if path in ("/api/voice-assistant/tts", "/bot-proxy/api/voice-assistant/tts", "/api/voice/tts", "/bot-proxy/api/voice/tts", "/tts", "/api/tts"):
             qs = parse_qs(parsed.query)
             raw_text = (qs.get("text", [""])[0]).strip()
             voice = (qs.get("voice", ["id-ID-GadisNeural"])[0]).strip()
@@ -4542,13 +4593,27 @@ class BotConfigHandler(BaseHTTPRequestHandler):
             if not clean:
                 clean = "Informasi selengkapnya sudah tampil di layar."
 
+            # Opsi 1: Google ID Translate TTS (Super Ringan & Cepat < 300ms)
+            if voice in ("google-id", "google", "default") or ("Neural" not in voice and voice not in ("gadis", "ardi")):
+                g_buf = generate_google_speech(clean)
+                if g_buf:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/mpeg")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Cache-Control", "public, max-age=86400")
+                    self.end_headers()
+                    self.wfile.write(g_buf)
+                    return
+
+            # Opsi 2: Microsoft Azure Neural TTS (id-ID-GadisNeural / id-ID-ArdiNeural)
+            edge_voice = "id-ID-ArdiNeural" if voice in ("ardi", "id-ID-ArdiNeural") else "id-ID-GadisNeural"
             tmp_id = f"{int(time.time())}_{secrets.token_hex(4)}"
             txt_path = f"/tmp/tts_{tmp_id}.txt"
             mp3_path = f"/tmp/tts_{tmp_id}.mp3"
             try:
                 with open(txt_path, "w", encoding="utf-8") as f_txt:
                     f_txt.write(clean)
-                cmd = ["edge-tts", "--voice", voice, "-f", txt_path, "--write-media", mp3_path]
+                cmd = ["edge-tts", "--voice", edge_voice, "-f", txt_path, "--write-media", mp3_path]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=15)
                 if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0:
                     self.send_response(200)
@@ -4844,6 +4909,37 @@ class BotConfigHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path in ("/api/voice-assistant/ask", "/bot-proxy/api/voice-assistant/ask", "/api/agent_command", "/bot-proxy/api/agent_command"):
+            raw_msg = str(req.get("message") or req.get("text") or "").strip()
+            sender = str(req.get("sender") or "voice_assistant_user").strip()
+            is_admin = bool(req.get("isAdmin", True))
+
+            cfgs = get_config()
+            gemini_key = cfgs.get("agent.gemini.apiKey", "")
+            gemini_model = cfgs.get("agent.gemini.model", "gemini-3.5-flash-lite")
+
+            try:
+                reply_text, _ = process_agent_command(
+                    user_text=raw_msg,
+                    sender_id=sender,
+                    is_admin=is_admin,
+                    gemini_key=gemini_key,
+                    gemini_model=gemini_model,
+                    registered_tag=req.get("registeredTag")
+                )
+            except Exception as e_cmd:
+                logger.error(f"Error handling voice ask: {e_cmd}")
+                reply_text = f"Terjadi kesalahan: {e_cmd}"
+
+            speech_text = clean_text_for_speech(reply_text or "")
+            self.send_json({
+                "ok": True,
+                "text": reply_text or "",
+                "speechText": speech_text,
+                "reply": reply_text or ""
+            })
+            return
 
         # Endpoint API Geolocation Pelanggan & ODP
         if path == "/api/wan/set":
