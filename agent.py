@@ -4319,6 +4319,14 @@ def apply_system_update():
                     if os.path.exists(app_src):
                         shutil.copy2(app_src, os.path.join(pub, "app.js"))
                         log("  ✓ app.js berhasil diperbarui.")
+                    voice_src = os.path.join(repo_dir, 'public', 'voice.html')
+                    if os.path.exists(voice_src):
+                        shutil.copy2(voice_src, os.path.join(pub, 'voice.html'))
+                        try:
+                            shutil.copy2(voice_src, '/opt/genieacs-agent/public/voice.html')
+                        except Exception:
+                            pass
+                        log('  ✓ voice.html (Voice AI Assistant) berhasil diperbarui.')
 
         # Update VirtualParameters (VlanID, pppoeUsername) & cache di MongoDB
         try:
