@@ -1878,21 +1878,68 @@ def is_voice_reply_active(chat_id):
 def clean_text_for_speech(text):
     if not text:
         return ""
-    # Hapus format markdown
-    t = re.sub(r'[*_`~#\[\]\(\)\>\+=\|{}.!-]', ' ', str(text))
-    # Hapus tautan URL
+    t = str(text)
+    
+    # 1. Hapus simbol, emoji, dan markdown
+    t = re.sub(r'[*_`~#\[\]\(\)\>\+=\|{}.!?,:;/\\]', ' ', t)
     t = re.sub(r'https?://\S+|www\.\S+', '', t)
-    # Hapus garis pemisah dan bullets
     t = re.sub(r'[━─═\-_]{2,}', ' ', t)
     t = re.sub(r'[•►✔️✅❌⚠️🔔💡📌🔍🚀📶🌐📊👥🔄🆕❓💳💸🏢📞🏠👤📱🤖🌓]', ' ', t)
-    # Hapus label teknis TR-069 yang berulang
     t = re.sub(r'InternetGatewayDevice\.[^\s]+', 'parameter modem', t)
-    # Normalisasi spasi
+    
+    # 2. Desimal minus agar dibaca alami
+    t = re.sub(r'-(\d+)\.(\d+)', r'minus \1 koma \2', t)
+    t = re.sub(r'-(\d+)', r'minus \1', t)
+    
+    # 3. Ganti singkatan teknis agar dibaca alami dalam bahasa Indonesia (bukan dieja per huruf)
+    replacements = [
+        (r'\bONU\b', 'modem'),
+        (r'\bonu\b', 'modem'),
+        (r'\bONT\b', 'modem'),
+        (r'\bont\b', 'modem'),
+        (r'\bPPPoE\b', 'pipoe'),
+        (r'\bPPPOE\b', 'pipoe'),
+        (r'\bpppoe\b', 'pipoe'),
+        (r'\bRX\s*Power\b', 'redaman'),
+        (r'\bRx\s*Power\b', 'redaman'),
+        (r'\bRX\b', 'redaman'),
+        (r'\bRx\b', 'redaman'),
+        (r'\brx\b', 'redaman'),
+        (r'\bTX\b', 'sinyal kirim'),
+        (r'\bTx\b', 'sinyal kirim'),
+        (r'\bdBm\b', 'desibel'),
+        (r'\bdbm\b', 'desibel'),
+        (r'\bSSID\b', 'nama wifi'),
+        (r'\bssid\b', 'nama wifi'),
+        (r'\bOLT\b', 'sentral optik'),
+        (r'\bolt\b', 'sentral optik'),
+        (r'\balamat\s+IP\b', 'alamat ip'),
+        (r'\bIP\b', 'ip'),
+        (r'\bSN\b', 'seri'),
+        (r'\bsn\b', 'seri'),
+        (r'\bvlan\b', 'velan'),
+        (r'\bVLAN\b', 'velan'),
+        (r'\bVlanID\b', 'velan id'),
+        (r'\bONLINE\b', 'online'),
+        (r'\bOFFLINE\b', 'offline')
+    ]
+    for pattern, repl in replacements:
+        t = re.sub(pattern, repl, t, flags=re.IGNORECASE)
+        
+    # 4. Ubah kata yang huruf KAPITAL semua menjadi huruf kecil (agar tidak dieja per huruf oleh TTS)
+    words = []
+    for w in t.split():
+        if w.isupper() and len(w) > 1:
+            words.append(w.lower())
+        else:
+            words.append(w)
+    t = ' '.join(words)
+    
+    # 5. Ringkas jangan terlalu detail (maksimal 25 kata)
     t = re.sub(r'\s+', ' ', t).strip()
-    # Batasi agar TTS tidak berbicara kepanjangan (maksimal 45 kata, sisanya rujukan ke layar)
     words = t.split()
-    if len(words) > 45:
-        t = " ".join(words[:45]) + "... Rincian lengkapnya sudah saya tampilkan di layar."
+    if len(words) > 25:
+        t = ' '.join(words[:25]) + '... rincian selengkapnya sudah tampil di layar.'
     return t
 
 TTS_MEMORY_CACHE = {}
