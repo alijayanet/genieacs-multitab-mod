@@ -380,6 +380,34 @@
     }
 
     /* ACTION CONTROLS HUD */
+    .interrupt-hud {
+      margin-top: 10px;
+      display: flex;
+      justify-content: center;
+      transition: all 0.3s ease;
+    }
+    .btn-interrupt {
+      background: rgba(239, 68, 68, 0.22);
+      border: 1px solid rgba(239, 68, 68, 0.55);
+      color: #fca5a5;
+      padding: 7px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+      transition: all 0.2s ease;
+    }
+    .btn-interrupt:hover, .btn-interrupt:active {
+      background: rgba(239, 68, 68, 0.45);
+      border-color: #ef4444;
+      color: #fff;
+      transform: scale(1.04);
+    }
+    
     .call-controls {
       display: flex;
       align-items: center;
@@ -687,7 +715,7 @@
           <div class="orb-ring r2"></div>
           <div class="orb-ring r3"></div>
           <canvas id="visualizerCanvas" width="320" height="320"></canvas>
-          <div id="voiceOrb" class="voice-orb" onclick="toggleCall()" title="Klik untuk Mulai / Berbicara">
+          <div id="voiceOrb" class="voice-orb" title="Klik untuk Berbicara / Hentikan Jawaban">
             <i id="orbIcon" class="bi bi-mic-fill"></i>
           </div>
         </div>
@@ -698,6 +726,13 @@
           <div id="captionText" class="caption-text">
             Klik tombol hijau atau bola suara di atas untuk mulai berbicara.
           </div>
+        </div>
+
+        <!-- Interrupt HUD (Barge-in / Stop Speech) -->
+        <div id="interruptHud" class="interrupt-hud" style="display: none;">
+          <button id="btnInterrupt" class="btn-interrupt" onclick="interruptAi(true)">
+            <i class="bi bi-stop-circle-fill"></i> Hentikan Jawaban &amp; Bicara Lagi
+          </button>
         </div>
 
         <!-- Call Action HUD -->
@@ -811,6 +846,56 @@
         window.location.replace('/login');
       }
     })();
+
+    // QUERY CANCEL GUARD & BARGE-IN INTERRUPT HELPER
+    let currentQueryId = 0;
+
+    function updateInterruptBtn(show) {
+      const el = document.getElementById('interruptHud');
+      if (el) {
+        el.style.display = show ? 'flex' : 'none';
+      }
+    }
+
+    function interruptAi(andListen = true) {
+      currentQueryId++; // Batalkan respon server lama yang masih tertunda
+      isProcessing = false;
+      isAiSpeaking = false;
+
+      stopAudioPlayback();
+      if (window.AndroidBridge && typeof window.AndroidBridge.stopNativeSpeech === 'function') {
+        try { window.AndroidBridge.stopNativeSpeech(); } catch (e) {}
+      }
+
+      if (speechSilenceTimer) {
+        clearTimeout(speechSilenceTimer);
+        speechSilenceTimer = null;
+      }
+      accumulatedSpeech = '';
+
+      if (typeof triggerVibrate === 'function') {
+        triggerVibrate(40);
+      }
+
+      updateInterruptBtn(false);
+
+      if (andListen && isInCall) {
+        setOrbState('listening');
+        captionLabel.innerText = 'Mendengarkan (Bicara Ulang)...';
+        captionText.classList.add('interim');
+        captionText.innerText = 'Jawaban dihentikan. Silakan sampaikan pertanyaan baru...';
+        stopListening();
+        setTimeout(() => {
+          if (isInCall && !isAiSpeaking && !isProcessing) {
+            startListening();
+          }
+        }, 120);
+      } else {
+        setOrbState('idle');
+        captionLabel.innerText = 'Panggilan Terhubung';
+        captionText.innerText = 'Jawaban dihentikan. Ketuk bola suara untuk berbicara lagi.';
+      }
+    }
 
     // STATE MANAGEMENT (METODE BILLING-RTRW - ZERO LOOPING & ZERO REDUNDANCY)
     let isInCall = false;
@@ -1017,6 +1102,7 @@
     function setOrbState(state) {
       voiceOrb.className = 'voice-orb ' + state;
       statusBadge.className = 'status-badge ' + state;
+      updateInterruptBtn(state === 'speaking' || state === 'thinking');
 
       if (state === 'listening') {
         statusText.innerText = 'Mendengarkan Suara...';
@@ -1106,6 +1192,8 @@
 
     // PROSES PERTANYAAN USER (API CALL - ZERO LOOPING & MUTEX GUARD)
     async function handleUserSpoken(questionText) {
+      if (!questionText) return;
+      const myQueryId = ++currentQueryId;
       if (!questionText || isProcessing || isAiSpeaking) return;
       isProcessing = true;
 
@@ -1158,6 +1246,7 @@
         }
 
         if (success && replyText) {
+          if (myQueryId !== currentQueryId) return; // Jawaban dibatalkan user via interupsi
           appendChatBubble('assistant', replyText);
           captionText.innerText = replyText;
           await speakResponse(speechText || replyText);
@@ -1434,19 +1523,36 @@
     // INIT SAAT READY
     document.addEventListener('DOMContentLoaded', () => {
       initSpeechRecognition();
-        voiceOrb.addEventListener('click', () => {
-      if (!isInCall) {
-        startCall();
-        return;
-      }
-      if (accumulatedSpeech) {
-        finalizeAndSendSpeech();
-        return;
-      }
-      if (!isRecognizing && !isAiSpeaking && !isProcessing) {
-        startListening();
-      }
-    });
+        voiceOrb.addEventListener('click', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (typeof triggerVibrate === 'function') triggerVibrate(35);
+
+        // Jika panggilan belum dimulai, mulai sekarang
+        if (!isInCall) {
+          startCall();
+          return;
+        }
+
+        // 1. JIKA AI SEDANG MENJAWAB / MEMPROSES:
+        // Ketuk bola langsung MEMOTONG JAWABAN & BUKA MIC UNTUK PERINTAH BARU!
+        if (isAiSpeaking || isProcessing) {
+          interruptAi(true);
+          return;
+        }
+
+        // 2. JIKA ADA SUARA USER YANG BARU SAJA DIUCAPKAN:
+        // Kirim langsung sekarang tanpa perlu menunggu jeda hening
+        if (accumulatedSpeech) {
+          finalizeAndSendSpeech();
+          return;
+        }
+
+        // 3. JIKA SEDANG IDLE / BELUM MENDENGARKAN:
+        // Mulai mendengarkan suara user
+        if (!isRecognizing) {
+          startListening();
+        }
+      });
       if (window.speechSynthesis) {
         window.speechSynthesis.onvoiceschanged = () => {
           window.speechSynthesis.getVoices();
