@@ -9,6 +9,7 @@ import sys
 import shutil
 import re
 import time
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import subprocess
@@ -1498,6 +1499,32 @@ AI_SERVER_TOOLS = [
         "name": "update_system_git",
         "description": "Jalankan pembaruan sistem GenieACS dari repository GitHub resmi (git pull, ekstrak update, set permission, dan restart service).",
         "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "get_bad_rx_modems",
+        "description": "Ambil daftar seluruh modem ONT pelanggan yang mengalami redaman kritis / sinyal drop (di bawah -26 dBm) lengkap dengan nama PPPoE, nilai dBm, dan tipe modem.",
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "get_unconfigured_onts",
+        "description": "Ambil daftar modem ONT baru yang terhubung ke jaringan GenieACS tetapi belum tersetting username PPPoE.",
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "get_devices_stats",
+        "description": "Ambil ringkasan statistik total modem terdaftar, jumlah online aktif, dan jumlah offline di database GenieACS.",
+        "parameters": {"type": "OBJECT", "properties": {}}
+    },
+    {
+        "name": "get_device_detail",
+        "description": "Ambil data lengkap pelanggan modem (IP, Redaman, SSID WiFi, Password, Status Online) berdasarkan username PPPoE atau Serial Number.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "target": {"type": "STRING", "description": "Username PPPoE atau Serial Number modem pelanggan"}
+            },
+            "required": ["target"]
+        }
     }
 ]
 
@@ -1531,6 +1558,25 @@ def dispatch_ai_tool(name, args):
             return {"success": False, "error": "Database tidak terhubung atau parameter kosong"}
         elif name == "update_system_git":
             return apply_system_update()
+        elif name == "get_bad_rx_modems":
+            return get_bad_rx_summary()
+        elif name == "get_unconfigured_onts":
+            return get_unconfigured_onts()
+        elif name == "get_devices_stats":
+            db = get_db()
+            if db is not None:
+                t = db.devices.count_documents({})
+                five_m = datetime.utcnow() - timedelta(minutes=5)
+                on = db.devices.count_documents({"_lastInform": {"$gte": five_m}})
+                return {"total_devices": t, "online_devices": on, "offline_devices": max(0, t - on)}
+            return {"error": "Database tidak terhubung"}
+        elif name == "get_device_detail":
+            target = args.get("target")
+            d = find_device(target)
+            if d:
+                _, sum_text, _ = get_device_summary(d)
+                return sum_text
+            return f"Modem {target} tidak ditemukan di database."
         else:
             return {"error": f"Tool '{name}' tidak ditemukan."}
     except Exception as e:
@@ -1569,6 +1615,33 @@ def fallback_admin_intent(raw):
             f"⚙️ *Status Layanan:*\n{svc_lines}\n\n"
             f"🔌 *Port Status:*\n{port_lines}"
         )
+
+    # 4. Redaman Kritis / Optik
+    if re.search(r'\b(redaman|kritis|los|jelek|drop|rx power|sinyal lemah|optik)\b', text, re.I):
+        return get_bad_rx_summary()
+
+    # 5. Rekap Total / Online / Offline Modem
+    if re.search(r'\b(berapa|total|jumlah|banyak)\b.*\b(modem|pelanggan|ont|klien)\b', text, re.I) or re.search(r'\b(modem|pelanggan)\b.*\b(online|offline)\b', text, re.I):
+        db = get_db()
+        if db is not None:
+            t = db.devices.count_documents({})
+            five_m = datetime.utcnow() - timedelta(minutes=5)
+            on = db.devices.count_documents({"_lastInform": {"$gte": five_m}})
+            off = max(0, t - on)
+            pct = (on / t * 100) if t > 0 else 0
+            return (
+                f"📊 *REKAP KONEKSI MODEM PELANGGAN*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Total Modem Terdaftar:* `{t} unit`\n"
+                f"• *Modem Online Aktif:* `{on} unit` ({pct:.1f}%)\n"
+                f"• *Modem Offline / Mati:* `{off} unit`\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"👉 _Ketik `redaman` untuk melihat modem yang redamannya kritis._"
+            )
+
+    # 6. ONT Baru / Belum Setting
+    if re.search(r'\b(ontbaru|newont|unconf|modem baru|ont baru|belum setting|belum disetting)\b', text, re.I):
+        return get_unconfigured_onts()
 
     # 3. Cek IP & Jaringan
     if re.search(r'\b(cek|lihat|info|status)\b.*\b(ip|jaringan|network|ethernet)\b', text, re.I):
@@ -2289,6 +2362,55 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
             adm_rep = fallback_admin_intent(raw)
             if adm_rep:
                 return (adm_rep, None)
+
+    # === DETEKSI INTENT NATURAL PERTANYAAN ADMIN DENGAN DATA REALTIME SERVER ===
+    if is_admin:
+        lower_txt = clean_txt.lower()
+        words_txt = lower_txt.split()
+
+        # A. Audit Redaman Kritis / Drop / LOS massal
+        rx_triggers = ["redaman", "kritis", "los", "jelek", "drop", "rx power", "sinyal lemah", "optik"]
+        if any(trg in lower_txt for trg in rx_triggers):
+            generic_markers = ["yang", "semua", "daftar", "list", "ada", "kritis", "drop", "berapa", "kolektif", "massal", "mana saja", "jelek", "buruk", "lemah", "kritisnya", "redamannya"]
+            tokens = [w for w in words_txt if w not in ["cek", "lihat", "status", "info", "kondisi", "modem", "ont", "sinyal", "koneksi", "pelanggan", "di"]]
+            target_cand = " ".join([t for t in tokens if t not in rx_triggers and t not in generic_markers]).strip()
+            if target_cand:
+                dev = find_device(target_cand)
+                if dev:
+                    _, sum_txt, wifi_on = get_device_summary(dev)
+                    return (sum_txt, get_device_inline_keyboard(target_cand, dev.get("_id"), wifi_on))
+            return (get_bad_rx_summary(), get_main_menu_keyboard())
+
+        # B. Cek ONT Baru / Belum Setting
+        ont_triggers = ["ontbaru", "newont", "unconf", "modem baru", "ont baru", "belum setting", "belum disetting", "belum tersetting"]
+        if any(trg in lower_txt for trg in ont_triggers):
+            return (get_unconfigured_onts(), get_main_menu_keyboard())
+
+        # C. Rekap Jumlah Total / Online / Offline Modem
+        stats_triggers = ["berapa modem", "total modem", "modem online", "modem offline", "jumlah modem", "total pelanggan", "berapa ont", "status modem"]
+        if any(trg in lower_txt for trg in stats_triggers):
+            db = get_db()
+            if db is not None:
+                total_devs = db.devices.count_documents({})
+                five_min_ago = datetime.utcnow() - timedelta(minutes=5)
+                online_devs = db.devices.count_documents({"_lastInform": {"$gte": five_min_ago}})
+                offline_devs = max(0, total_devs - online_devs)
+                pct_online = (online_devs / total_devs * 100) if total_devs > 0 else 0
+                rep = (
+                    f"📊 *REKAP KONEKSI MODEM PELANGGAN*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• *Total Modem Terdaftar:* `{total_devs} unit`\n"
+                    f"• *Modem Online Aktif:* `{online_devs} unit` ({pct_online:.1f}%)\n"
+                    f"• *Modem Offline / Mati:* `{offline_devs} unit`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👉 _Ketik `redaman` untuk melihat modem yang redamannya kritis._"
+                )
+                return (rep, get_main_menu_keyboard())
+
+        # D. Status Server STB Armbian (CPU, RAM, Suhu)
+        server_triggers = ["status server", "cek server", "kondisi server", "suhu stb", "suhu cpu", "cek ram", "cek disk", "uptime server", "kondisi stb"]
+        if any(trg in lower_txt for trg in server_triggers):
+            return (get_server_stats(), get_main_menu_keyboard())
 
     # Standard command parsing (stripping leading emojis/symbols)
     norm_txt = re.sub(r'^[^\w\s]+', '', clean_txt).strip()
