@@ -439,10 +439,12 @@ def get_customer_friendly_summary(dev):
         f"• `reboot` ➔ Restart modem jika koneksi berat"
     )
 
+STOP_WORDS_REGEX = r'\b(cek|cekkan|cekin|periksa|periksakan|lihat|lihatkan|intip|info|informasi|status|kondisi|modem|modemnya|onu|onunya|ont|ontnya|cpe|perangkat|device|pelanggan|user|akun|pppoe|klien|client|redaman|redamannya|sinyal|sinyalnya|rx|rxpower|optik|power|wifi|wifinya|ssid|sandi|password|ip|koneksi|tolong|bisa|coba|mohon|dong|min|ya|sih|yang|di|dari|ke|pada|untuk|nya|ini|itu|hari|kemarin|sekarang|besok|katanya|tadi|milik|punya|tempat|tempatnya|bantu|si|gak|ada|kah|lah|banget|lemot|mati|down|rusak|reboot|rebootkan|restart|restartkan|daftar|list|semua|berapa|banyak|total|jumlah|jelek|buruk|kritis|drop|los|lemah|baik|normal)\b'
+
 def clean_device_target_str(q):
     if not q:
         return ""
-    t = re.sub(r'\b(cek|lihat|intip|info|informasi|status|kondisi|modem|onu|ont|cpe|perangkat|device|pelanggan|user|akun|pppoe|klien|client|redaman|sinyal|rx|rxpower|optik|power|wifi|ssid|sandi|password|ip|koneksi|tolong|coba|mohon|dong|min|ya|sih|yang|di|dari|ke|pada|untuk|nya|ini|itu|reboot|restart|daftar|list|semua)\b', ' ', str(q), flags=re.IGNORECASE)
+    t = re.sub(STOP_WORDS_REGEX, ' ', str(q), flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', t).strip()
 
 def find_device(query_str):
@@ -454,24 +456,21 @@ def find_device(query_str):
         return None
 
     def _query_mongo(term):
-        reg = {"$regex": re.escape(term), "$options": "i"}
+        reg_exact = {"$regex": f"^{re.escape(term)}$", "$options": "i"}
+        reg_sub = {"$regex": re.escape(term), "$options": "i"}
         return db.devices.find_one({
             "$or": [
-                {"_tags": reg},
-                {"tags": reg},
-                {"VirtualParameters.pppoeUsername._value": reg},
-                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username._value": reg},
-                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value": reg},
-                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.Username._value": reg},
-                {"VirtualParameters.WlanSSID._value": reg},
-                {"InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID._value": reg},
-                {"_id": reg},
-                {"_deviceId._SerialNumber": reg},
-                {"DeviceID.SerialNumber._value": reg},
+                {"VirtualParameters.pppoeUsername._value": reg_exact},
+                {"_tags": reg_exact},
+                {"tags": reg_exact},
+                {"_deviceId._SerialNumber": reg_exact},
+                {"DeviceID.SerialNumber._value": reg_exact},
+                {"_id": reg_exact},
+                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username._value": reg_exact},
+                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value": reg_exact},
                 {"VirtualParameters.pppoeIP._value": term},
-                {"VirtualParameters.MacAddress._value": reg},
-                {"VirtualParameters.PonMac._value": reg},
-                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress._value": term}
+                {"VirtualParameters.WlanSSID._value": reg_sub},
+                {"_id": reg_sub}
             ]
         })
 
@@ -2414,6 +2413,18 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
         ont_triggers = ["ontbaru", "newont", "unconf", "modem baru", "ont baru", "onu baru", "cek onu baru", "cek ont baru", "belum setting", "belum disetting", "belum tersetting"]
         if any(trg in lower_txt for trg in ont_triggers):
             return (get_unconfigured_onts(), get_main_menu_keyboard())
+
+        # Perintah Restart / Reboot Natural
+        restart_triggers = ["restart", "reboot", "restartkan", "rebootkan", "merestart", "hidupkan ulang", "muat ulang"]
+        if any(trg in lower_txt for trg in restart_triggers):
+            target_cand = clean_device_target_str(lower_txt)
+            if target_cand:
+                dev = find_device(target_cand)
+                if dev:
+                    ok, msg = reboot_device_task(dev)
+                    if ok:
+                        return (f"✅ {msg}", None)
+                    return (f"❌ {msg}", None)
 
         # C. Rekap Jumlah Total / Online / Offline Modem
         stats_triggers = ["berapa modem", "total modem", "modem online", "modem offline", "jumlah modem", "total pelanggan", "berapa ont", "berapa onu", "total onu", "jumlah onu", "total ont", "jumlah ont", "status modem", "status onu", "status ont", "cek onu", "cek ont", "daftar modem", "daftar onu", "daftar ont", "list onu", "list ont", "list modem"]
