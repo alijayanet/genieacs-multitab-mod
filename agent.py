@@ -439,33 +439,62 @@ def get_customer_friendly_summary(dev):
         f"• `reboot` ➔ Restart modem jika koneksi berat"
     )
 
+def clean_device_target_str(q):
+    if not q:
+        return ""
+    t = re.sub(r'\b(cek|lihat|intip|info|informasi|status|kondisi|modem|onu|ont|cpe|perangkat|device|pelanggan|user|akun|pppoe|klien|client|redaman|sinyal|rx|rxpower|optik|power|wifi|ssid|sandi|password|ip|koneksi|tolong|coba|mohon|dong|min|ya|sih|yang|di|dari|ke|pada|untuk|nya|ini|itu|reboot|restart|daftar|list|semua)\b', ' ', str(q), flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', t).strip()
+
 def find_device(query_str):
     db = get_db()
-    if db is None:
+    if db is None or not query_str:
         return None
-    q = query_str.strip()
-    reg = {"$regex": q, "$options": "i"}
+    q = str(query_str).strip()
+    if not q:
+        return None
 
-    dev = db.devices.find_one({
-        "$or": [
-            {"_tags": reg},
-            {"tags": reg},
-            {"VirtualParameters.pppoeUsername._value": reg},
-            {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username._value": reg},
-            {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value": reg},
-            {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.Username._value": reg},
-            {"VirtualParameters.WlanSSID._value": reg},
-            {"InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID._value": reg},
-            {"_id": reg},
-            {"_deviceId._SerialNumber": reg},
-            {"DeviceID.SerialNumber._value": reg},
-            {"VirtualParameters.pppoeIP._value": q},
-            {"VirtualParameters.MacAddress._value": reg},
-            {"VirtualParameters.PonMac._value": reg},
-            {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress._value": q}
-        ]
-    })
-    return dev
+    def _query_mongo(term):
+        reg = {"$regex": re.escape(term), "$options": "i"}
+        return db.devices.find_one({
+            "$or": [
+                {"_tags": reg},
+                {"tags": reg},
+                {"VirtualParameters.pppoeUsername._value": reg},
+                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username._value": reg},
+                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value": reg},
+                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.Username._value": reg},
+                {"VirtualParameters.WlanSSID._value": reg},
+                {"InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID._value": reg},
+                {"_id": reg},
+                {"_deviceId._SerialNumber": reg},
+                {"DeviceID.SerialNumber._value": reg},
+                {"VirtualParameters.pppoeIP._value": term},
+                {"VirtualParameters.MacAddress._value": reg},
+                {"VirtualParameters.PonMac._value": reg},
+                {"InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress._value": term}
+            ]
+        })
+
+    # 1. Cari langsung term asli
+    dev = _query_mongo(q)
+    if dev:
+        return dev
+
+    # 2. Cari setelah dibersihkan kata deskriptor (onu, ont, modem, pelanggan, dll)
+    cleaned = clean_device_target_str(q)
+    if cleaned and cleaned.lower() != q.lower():
+        dev = _query_mongo(cleaned)
+        if dev:
+            return dev
+
+    # 3. Coba cari kata terakhir jika multi-kata
+    parts = [w for w in q.split() if len(w) >= 3 and w.lower() not in ["modem", "onu", "ont", "cek", "info", "user", "akun", "klien", "redaman", "status"]]
+    for w in reversed(parts):
+        dev = _query_mongo(w)
+        if dev:
+            return dev
+
+    return None
 
 def find_device_by_customer_identifier(ident_str):
     if not ident_str:
@@ -2382,13 +2411,21 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
             return (get_bad_rx_summary(), get_main_menu_keyboard())
 
         # B. Cek ONT Baru / Belum Setting
-        ont_triggers = ["ontbaru", "newont", "unconf", "modem baru", "ont baru", "belum setting", "belum disetting", "belum tersetting"]
+        ont_triggers = ["ontbaru", "newont", "unconf", "modem baru", "ont baru", "onu baru", "cek onu baru", "cek ont baru", "belum setting", "belum disetting", "belum tersetting"]
         if any(trg in lower_txt for trg in ont_triggers):
             return (get_unconfigured_onts(), get_main_menu_keyboard())
 
         # C. Rekap Jumlah Total / Online / Offline Modem
-        stats_triggers = ["berapa modem", "total modem", "modem online", "modem offline", "jumlah modem", "total pelanggan", "berapa ont", "status modem"]
+        stats_triggers = ["berapa modem", "total modem", "modem online", "modem offline", "jumlah modem", "total pelanggan", "berapa ont", "berapa onu", "total onu", "jumlah onu", "total ont", "jumlah ont", "status modem", "status onu", "status ont", "cek onu", "cek ont", "daftar modem", "daftar onu", "daftar ont", "list onu", "list ont", "list modem"]
         if any(trg in lower_txt for trg in stats_triggers):
+            target_cand = clean_device_target_str(lower_txt)
+            if target_cand:
+                dev = find_device(target_cand)
+                if dev:
+                    pppoe_user, summary_text, wifi_on = get_device_summary(dev)
+                    dev_id = dev.get("_id")
+                    kb = get_device_inline_keyboard(pppoe_user, dev_id, wifi_on)
+                    return (summary_text, kb)
             db = get_db()
             if db is not None:
                 total_devs = db.devices.count_documents({})
@@ -2431,11 +2468,12 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
             rest = ""
     elif cmd in ["restart", "reboot"]:
         cmd = "reboot"
-        if rest.lower().startswith("modem"):
-            rest = rest[5:].strip()
+        rest = re.sub(r'^(?:modem|onu|ont|perangkat)\s+', '', rest, flags=re.IGNORECASE).strip()
     elif cmd in ["cek", "status", "info", "sinyal", "koneksi"]:
-        if rest.lower() in ["koneksi", "sinyal", "wifi", "modem", "status", "internet", "kuota"]:
+        if rest.lower() in ["koneksi", "sinyal", "wifi", "modem", "onu", "ont", "status", "internet", "kuota", "perangkat", "semua"]:
             rest = ""
+        else:
+            rest = re.sub(r'^(?:modem|onu|ont|perangkat)\s+', '', rest, flags=re.IGNORECASE).strip()
         cmd = "cek"
     elif cmd in ["ganti", "ubah"]:
         sub = rest.split(maxsplit=1)
@@ -2539,15 +2577,34 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
         if not is_admin:
             dev_target = customer_dev or (find_device(target) if target else None)
             if not dev_target:
-                return ("⚠️ Nomor WhatsApp Anda belum terhubung ke modem. Ketik `daftar <id_pppoe>` terlebih dahulu.", None)
+                return ("📌 Nomor WhatsApp Anda belum terhubung ke modem. Ketik `daftar <id_pppoe>` terlebih dahulu.", None)
             return (get_customer_friendly_summary(dev_target), None)
 
-        if not target:
-            return ("⚠️ Silakan sertakan Username PPPoE atau Serial Number.\n_Contoh:_ `cek cucimotor`", None)
+        clean_target = clean_device_target_str(target) if target else ""
+        if not clean_target:
+            db = get_db()
+            if db is not None:
+                total_devs = db.devices.count_documents({})
+                five_min_ago = datetime.utcnow() - timedelta(minutes=5)
+                online_devs = db.devices.count_documents({"_lastInform": {"$gte": five_min_ago}})
+                offline_devs = max(0, total_devs - online_devs)
+                pct_online = (online_devs / total_devs * 100) if total_devs > 0 else 0
+                rep = (
+                    f"📊 *REKAP KONEKSI MODEM / ONU PELANGGAN*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• *Total Modem Terdaftar:* `{total_devs} unit`\n"
+                    f"• *Modem Online Aktif:* `{online_devs} unit` ({pct_online:.1f}%)\n"
+                    f"• *Modem Offline / Mati:* `{offline_devs} unit`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👉 _Ketik `cek <username>` (contoh: `cek ajri` atau `cek sumi`) untuk rincian ONT pelanggan._\n"
+                    f"👉 _Ketik `redaman` untuk melihat seluruh modem yang redamannya kritis._"
+                )
+                return (rep, get_main_menu_keyboard())
+            return ("📌 Silakan sertakan Username PPPoE atau Serial Number.\n_Contoh:_ `cek cucimotor`", None)
 
-        dev = find_device(target)
+        dev = find_device(clean_target) or find_device(target)
         if not dev:
-            return (f"❌ Modem `{target}` tidak ditemukan di database GenieACS.", None)
+            return (f"❌ Modem / ONT `{clean_target or target}` tidak ditemukan di database GenieACS.", None)
 
         pppoe_user, summary_text, wifi_on = get_device_summary(dev)
         dev_id = dev.get("_id")
