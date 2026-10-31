@@ -2312,11 +2312,46 @@ def handle_callback_query(token, sender_id, cb_data, callback_id):
         ))
         return
 
+def normalize_speech_intent(text):
+    if not text:
+        return ""
+    t = str(text).lower()
+
+    # Koreksi fonetik dan salah tangkap audio mikrofon bahasa Indonesia
+    phonetic_fixes = [
+        # Cek / Lihat (sering terdengar "chat", "chek", "ceck")
+        (r'\b(chat|chek|ceck|cekkan|lihatkan|tengok|tolong cek|tolong lihat)\b', 'cek'),
+        # Redaman (sering terdengar "rekaman", "pedoman", "redam", "rendaman")
+        (r'\b(rekaman|pedoman|redam|rendaman|rekeman|rekaman optik|rekaman sinyal)\b', 'redaman'),
+        # Modem / ONU / ONT (sering terdengar "model", "modern", "mode")
+        (r'\b(model|modern|mode|moge|odem|odm|onom)\b', 'modem'),
+        # Reboot / Restart (sering terdengar "ribut", "ribot", "rebot")
+        (r'\b(ribut|ribot|rebot|re-boot|re start|restat|restrt)\b', 'reboot'),
+        # Sinyal (sering terdengar "signal", "singal")
+        (r'\b(signal|singal|sinyalnya)\b', 'sinyal'),
+        # Mati / Offline (sering terdengar "padam", "putus", "off line")
+        (r'\b(padam|putus|off line|ofline|terputus)\b', 'mati'),
+        # Kritis / Buruk
+        (r'\b(krisis|parah|hancur|anjlok)\b', 'kritis'),
+        # WiFi (sering terdengar "waifi", "waepai", "wai fai")
+        (r'\b(waifi|waepai|wai fai|wify|wi fi)\b', 'wifi'),
+        # PPPoE (sering terdengar "pipoe", "pipo e", "pipo")
+        (r'\b(pipoe|pipo e|pipo|pipoet|pepowe)\b', 'pppoe'),
+        # Berapa
+        (r'\b(brp|brapa|ada berapa)\b', 'berapa'),
+    ]
+    for pattern, repl in phonetic_fixes:
+        t = re.sub(pattern, repl, t)
+
+    return re.sub(r'\s+', ' ', t).strip()
+
 def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_key="", gemini_model="gemini-1.5-flash", registered_tag=None):
     raw = str(user_text or "").strip()
     if not raw:
         return (None, None)
 
+    # Normalisasi otomatis perintah suara fonetik dinamis
+    raw = normalize_speech_intent(raw)
     txt = raw
     clean_txt = txt.lstrip("/!#").strip()
 
