@@ -4398,7 +4398,8 @@ def get_geo_devices_data():
             "_lastInform": 1,
             "_ip": 1,
             "VirtualParameters": 1,
-            "InternetGatewayDevice.WANDevice": 1
+            "InternetGatewayDevice.WANDevice": 1,
+            "InternetGatewayDevice.LANDevice": 1
         })
 
         mapped_list = []
@@ -4465,6 +4466,20 @@ def get_geo_devices_data():
                 rx_status = "offline"
 
             vlan_raw = vp.get("VlanID", {}).get("_value") or vp.get("vlan", {}).get("_value") or "-"
+            wlan_cfg = dev.get("InternetGatewayDevice", {}).get("LANDevice", {}).get("1", {}).get("WLANConfiguration", {}).get("1", {})
+            wifi_ssid = (
+                vp.get("WlanSSID", {}).get("_value") or
+                vp.get("SSID", {}).get("_value") or
+                wlan_cfg.get("SSID", {}).get("_value") or
+                (f"ALIJAYA-{pppoe}" if pppoe and pppoe != "-" else "ALIJAYA-NET")
+            )
+            wifi_pass = (
+                vp.get("WlanPassword", {}).get("_value") or
+                wlan_cfg.get("KeyPassphrase", {}).get("_value") or
+                wlan_cfg.get("PreSharedKey", {}).get("1", {}).get("KeyPassphrase", {}).get("_value") or
+                "alijaya2026"
+            )
+
             dev_info = {
                 "vlan": str(vlan_raw),
                 "_id": dev_id,
@@ -4476,7 +4491,9 @@ def get_geo_devices_data():
                 "rx_val": rx_val,
                 "rx_status": rx_status,
                 "online": is_online,
-                "last_inform": last_inform_str
+                "last_inform": last_inform_str,
+                "wifi_ssid": str(wifi_ssid),
+                "wifi_pass": str(wifi_pass)
             }
 
             if dev_id in mapped_map:
@@ -5138,6 +5155,41 @@ class BotConfigHandler(BaseHTTPRequestHandler):
                 "reply": reply_text or ""
             })
             return
+        if path in ("/api/device/reboot", "/bot-proxy/api/device/reboot"):
+            dev_id = req.get("device_id") or req.get("_id") or req.get("id")
+            if not dev_id:
+                self.send_json({"success": False, "message": "ID Perangkat tidak boleh kosong"})
+                return
+            db = get_db()
+            dev = db.devices.find_one({"_id": dev_id}) if db else None
+            ok, msg = reboot_device_task(dev or {"_id": dev_id})
+            self.send_json({"success": ok, "message": msg})
+            return
+
+        if path in ("/api/device/refresh", "/bot-proxy/api/device/refresh"):
+            dev_id = req.get("device_id") or req.get("_id") or req.get("id")
+            if not dev_id:
+                self.send_json({"success": False, "message": "ID Perangkat tidak boleh kosong"})
+                return
+            db = get_db()
+            dev = db.devices.find_one({"_id": dev_id}) if db else None
+            ok, msg = refresh_device_task(dev or {"_id": dev_id})
+            self.send_json({"success": ok, "message": msg})
+            return
+
+        if path in ("/api/device/wifi", "/bot-proxy/api/device/wifi"):
+            dev_id = req.get("device_id") or req.get("_id") or req.get("id")
+            ssid = req.get("ssid")
+            password = req.get("password") or req.get("pass")
+            if not dev_id:
+                self.send_json({"success": False, "message": "ID Perangkat tidak boleh kosong"})
+                return
+            db = get_db()
+            dev = db.devices.find_one({"_id": dev_id}) if db else None
+            ok, msg = set_wifi_credentials(dev or {"_id": dev_id}, new_ssid=ssid, new_password=password)
+            self.send_json({"success": ok, "message": msg})
+            return
+
 
         # Endpoint API Geolocation Pelanggan & ODP
         if path == "/api/wan/set":
