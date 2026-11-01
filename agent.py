@@ -1932,7 +1932,7 @@ def clean_text_for_speech(text):
         (r'(?i)\bvlan\b', 'velan'),
         (r'(?i)\blos\b', 'kabel putus'),
         (r'(?i)\bperangkat:\s*[^\n,.]+', ''),
-        (r'(?i)\b°\s*c\b', ' derajat celsius'),
+        (r'(?i)[°\xb0]\s*c', ' derajat celsius'),
         (r'%', ' persen'),
         (r'(?i)\(kritis\s*/?\s*drop\)', 'kritis'),
         (r'(?i)\(sangat bagus\)', 'sangat bagus'),
