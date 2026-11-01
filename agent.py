@@ -160,15 +160,20 @@ def get_config():
         _RESOLVED_MONGO_URI = None
         return {}
 
-BRAND_NAME = "ALIJAYA NET"
+BRAND_NAME = "alijaya net"
 BRAND_PHONE = "081947215703"
 
-def update_branding(cfgs):
+def update_branding(cfgs=None):
     global BRAND_NAME, BRAND_PHONE
-    b_name = cfgs.get("agent.brand.name", "").strip()
-    b_phone = cfgs.get("agent.brand.phone", "").strip()
-    BRAND_NAME = b_name if b_name else "ALIJAYA NET"
-    BRAND_PHONE = b_phone if b_phone else "081947215703"
+    if cfgs is None:
+        cfgs = get_config()
+    b_name = str(cfgs.get("agent.brand.name", "")).strip()
+    b_phone = str(cfgs.get("agent.brand.phone", "")).strip()
+    if b_name:
+        BRAND_NAME = b_name
+    if b_phone:
+        BRAND_PHONE = b_phone
+    return BRAND_NAME, BRAND_PHONE
 
 def is_valid_token(val):
     if not val:
@@ -1731,8 +1736,12 @@ def fallback_admin_intent(raw):
 def ask_gemini_ai(gemini_key, model_name, user_prompt, sender_id="admin", is_admin=False):
     if not is_valid_token(gemini_key):
         if is_admin:
-            return fallback_admin_intent(user_prompt)
+            return clean_text_for_chat(fallback_admin_intent(user_prompt))
         return None
+
+    # Selalu pastikan nama brand dan nomor kontak sesuai konfigurasi dinamis MongoDB
+    cfgs = get_config()
+    update_branding(cfgs)
 
     # Fallback model pintar (mengutamakan model cepat dengan kuota aktif)
     candidate_models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]
@@ -1742,22 +1751,24 @@ def ask_gemini_ai(gemini_key, model_name, user_prompt, sender_id="admin", is_adm
     
     if is_admin:
         system_instruction = (
-            f"Anda adalah Asisten AI Senior DevOps Linux Armbian & TR-069 GenieACS Resmi dari {BRAND_NAME}.\n"
-            f"Kontak CS/WhatsApp: {BRAND_PHONE}.\n"
-            "Anda memiliki hak akses root penuh untuk mengelola server STB Armbian ini.\n"
-            "Anda dapat menggunakan tools untuk mendiagnosa server, memperbaiki izin file (chmod +x) GenieACS, "
-            "me-restart service, mengatur IP statik / DHCP melalui NetworkManager (nmcli), membaca log, dan menjalankan perintah Linux.\n"
-            "Gunakan tools secara proaktif ketika admin meminta bantuan teknis seputar server atau jaringan.\n"
-            "Selalu berikan penjelasan hasil kerja Anda secara ramah, sopan, ringkas, dan jelas dalam bahasa Indonesia."
+            f"Anda adalah Asisten Pintar Resmi dari {BRAND_NAME}.\n"
+            f"Nama resmi brand sistem adalah '{BRAND_NAME}'. Gunakan nama brand '{BRAND_NAME}' secara persis sesuai setelan di atas, jangan diubah huruf besar/kecilnya dan jangan ditambah tanda bintang atau format aneh.\n"
+            f"Nomor kontak bantuan CS / WhatsApp resmi: {BRAND_PHONE}.\n"
+            "ATURAN WAJIB FORMAT JAWABAN:\n"
+            "1. DILARANG menggunakan emoji atau simbol grafis apapun (misal senyum, jempol, tangan, bullet warna, dll).\n"
+            "2. DILARANG menggunakan tanda bintang/bold ganda berlebihan seperti **nama** atau markdown tebal. Gunakan teks polos yang rapi dan bersih.\n"
+            "3. Gunakan bahasa Indonesia yang ramah, sopan, mengalir, dan ringkas.\n"
+            "4. Tugas Anda membantu monitoring WiFi, server STB, modem GenieACS TR-069, serta menjawab pertanyaan umum dan mengobrol santai.\n"
         )
     else:
         system_instruction = (
-            f"Anda adalah Asisten Layanan Pelanggan (Customer Care) dari {BRAND_NAME} (Layanan Internet WiFi & RT/RW Net).\n"
+            f"Anda adalah Asisten Layanan Pelanggan resmi dari {BRAND_NAME}.\n"
+            f"Nama resmi brand sistem adalah '{BRAND_NAME}'. Gunakan nama brand '{BRAND_NAME}' secara persis sesuai setelan di atas.\n"
             f"Nomor Kontak WhatsApp / CS: {BRAND_PHONE}.\n"
-            "Tugas Anda adalah menjawab pertanyaan calon pelanggan atau masyarakat seputar layanan WiFi secara ramah, santun, ringkas, dan membantu dalam bahasa Indonesia.\n"
-            "PENTING: Gunakan gaya bahasa percakapan WhatsApp yang alami dan santai (seperti chat orang biasa). "
-            "JANGAN PERNAH menambahkan kop surat, header perusahaan (seperti nama kantor di baris atas), garis pembatas, atau footer berulang agar pesan terlihat seperti chat WhatsApp normal.\n"
-            "Jika mereka menanyakan pasang baru atau promo, sampaikan dengan santai dan sarankan untuk menghubungi nomor kontak CS di atas jika butuh dibantu lebih lanjut."
+            "ATURAN WAJIB FORMAT JAWABAN:\n"
+            "1. DILARANG menggunakan emoji atau simbol visual apapun.\n"
+            "2. DILARANG menggunakan markdown bintang/bold ganda berlebihan.\n"
+            "3. Jawab pertanyaan seputar WiFi dan internet secara santai, ramah, dan ringkas dalam bahasa Indonesia.\n"
         )
 
     contents = [
@@ -1814,7 +1825,7 @@ def ask_gemini_ai(gemini_key, model_name, user_prompt, sender_id="admin", is_adm
                     text_reply += p["text"]
 
             if not func_call:
-                return text_reply.strip()
+                return clean_text_for_chat(text_reply.strip())
 
             fn_name = func_call.get("name")
             fn_args = func_call.get("args", {})
@@ -1842,7 +1853,7 @@ def ask_gemini_ai(gemini_key, model_name, user_prompt, sender_id="admin", is_adm
             break
 
     if is_admin:
-        return fallback_admin_intent(user_prompt)
+        return clean_text_for_chat(fallback_admin_intent(user_prompt))
     return None
 
 # ==============================================================================
@@ -2364,6 +2375,10 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
     if not raw:
         return (None, None)
 
+    # Selalu muat nama brand dan kontak terbaru dari setting GenieACS MongoDB (tanpa hardcoded)
+    cfgs = get_config()
+    update_branding(cfgs)
+
     # Normalisasi otomatis perintah suara fonetik dinamis
     raw = normalize_speech_intent(raw)
     txt = raw
@@ -2432,9 +2447,9 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
             "━━━━━━━━━━━━━━━━━━━━\n"
             "Silakan gunakan salah satu format perintah berikut:\n\n"
             "• *Ubah Nama & Sandi:* `wifi <user> <nama_wifi_baru> <sandi_baru>`\n"
-            "  _Contoh:_ `wifi cucimotor Alijaya-Net 12345678`\n\n"
+            "  _Contoh:_ `wifi cucimotor {BRAND_NAME.replace(\" \", \"-\")} 12345678`\n\n"
             "• *Ubah Nama WiFi Saja:* `ssid <user> <nama_wifi_baru>`\n"
-            "  _Contoh:_ `ssid cucimotor Alijaya-Net`\n\n"
+            "  _Contoh:_ `ssid cucimotor {BRAND_NAME.replace(\" \", \"-\")}`\n\n"
             "• *Ubah Sandi WiFi Saja:* `pass <user> <sandi_baru>`\n"
             "  _Contoh:_ `pass cucimotor 12345678`"
         )
@@ -2808,7 +2823,7 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
             return (f"❌ Gagal memperbarui WiFi: {msg}", None)
         else:
             if is_admin:
-                return ("⚠️ Format salah. Gunakan:\n`wifi <user> <nama_wifi_baru> <sandi_baru>`\n_Contoh:_ `wifi cucimotor Alijaya-Net 12345678`", None)
+                return ("⚠️ Format salah. Gunakan:\n`wifi <user> <nama_wifi_baru> <sandi_baru>`\n_Contoh:_ `wifi cucimotor {BRAND_NAME.replace(\" \", \"-\")} 12345678`", None)
             else:
                 return ("⚠️ Format salah. Gunakan:\n`wifi <nama_wifi_baru> <sandi_baru>`\n_Contoh:_ `wifi WiFi-Saya SandiRahasia123`", None)
 
@@ -3125,10 +3140,10 @@ def handle_incoming_message(token, chat_id, user_text, gemini_key, model_name, i
             "Silakan gunakan salah satu format perintah berikut:\n\n"
             "1️⃣ *Ubah Nama & Sandi WiFi Sekaligus:*\n"
             "`wifi <user_pppoe> <nama_wifi_baru> <sandi_baru>`\n"
-            "_Contoh:_ `wifi cucimotor Alijaya-Net 12345678`\n\n"
+            "_Contoh:_ `wifi cucimotor {BRAND_NAME.replace(\" \", \"-\")} 12345678`\n\n"
             "2️⃣ *Ubah Nama WiFi (SSID) Saja:*\n"
             "`ssid <user_pppoe> <nama_wifi_baru>`\n"
-            "_Contoh:_ `ssid cucimotor Alijaya-Net`\n\n"
+            "_Contoh:_ `ssid cucimotor {BRAND_NAME.replace(\" \", \"-\")}`\n\n"
             "3️⃣ *Ubah Sandi WiFi Saja (min. 8 Karakter):*\n"
             "`pass <user_pppoe> <sandi_baru>`\n"
             "_Contoh:_ `pass cucimotor 12345678`\n\n"
