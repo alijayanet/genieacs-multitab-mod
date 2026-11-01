@@ -412,13 +412,13 @@ def get_customer_friendly_summary(dev):
     )
     
     last_inform = dev.get("_lastInform")
-    online_str = "Offline 🔴"
+    online_str = "Offline"
     if last_inform:
         diff_sec = get_datetime_diff_seconds(last_inform)
         if diff_sec < 600:
             online_str = "Online (Normal) 🟢"
         else:
-            online_str = f"Offline ({int(diff_sec//60)} mnt lalu) 🔴"
+            online_str = f"Offline ({int(diff_sec//60)} mnt lalu)"
 
     return (
         f"┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
@@ -576,11 +576,11 @@ def get_device_summary(dev):
         try:
             rx_val = float(str(rx).replace("dBm", "").strip())
             if rx_val >= -23.0:
-                rx_badge = "(Sangat Bagus 🟢)"
+                rx_badge = "(Sangat Bagus)"
             elif rx_val >= -26.0:
-                rx_badge = "(Normal 🟡)"
+                rx_badge = "(Normal)"
             else:
-                rx_badge = "(Kritis / Drop 🔴)"
+                rx_badge = "(Kritis / Drop)"
         except Exception:
             pass
         if not str(rx).endswith("dBm"):
@@ -627,13 +627,13 @@ def get_device_summary(dev):
     )
     
     last_inform = dev.get("_lastInform")
-    online_str = "Offline 🔴"
+    online_str = "Offline"
     if last_inform:
         diff_sec = get_datetime_diff_seconds(last_inform)
         if diff_sec < 600:
-            online_str = "Online (Aktif) 🟢"
+            online_str = "Online (Aktif)"
         else:
-            online_str = f"Offline ({int(diff_sec//60)} mnt lalu) 🔴"
+            online_str = f"Offline ({int(diff_sec//60)} mnt lalu)"
             
     mfr = did.get("_Manufacturer") or dev.get("DeviceID", {}).get("Manufacturer", {}).get("_value") or "-"
     model = did.get("_ProductClass") or dev.get("DeviceID", {}).get("ProductClass", {}).get("_value") or "-"
@@ -641,23 +641,18 @@ def get_device_summary(dev):
     mac = vp.get("MacAddress", {}).get("_value") or vp.get("PonMac", {}).get("_value") or "-"
     
     res = (
-        f"┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
-        f"  👤 *PELANGGAN : {display_user.upper()}*\n"
-        f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n"
-        f"• *Akun PPPoE*    : `{display_user}`\n"
-        f"• *Status ONT*    : {online_str}\n"
-        f"• *Redaman (RX)*  : `{rx}` {rx_badge}\n"
-        f"• *Suhu Transceiver*: `{temp}`\n"
-        f"• *IP WAN PPPoE*  : `{ip}`\n"
-        f"• *Uptime Modem*  : `{uptime}`\n"
-        f"• *Nama WiFi*     : `{ssid}` ({'Radio ON 🟢' if wifi_is_on else 'Radio OFF 🔴'})\n"
-        f"• *Sandi WiFi*    : `{wifi_pass}`\n"
-        f"• *User Konek*    : `{clients} perangkat`\n"
-        f"• *Model Hardware*: {mfr} {model}\n"
-        f"• *Serial Number* : `{sn}`\n"
-        f"• *MAC Address*   : `{mac}`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👑 *{BRAND_NAME} TR-069 Management*"
+        f"Status Modem: {display_user}\n"
+        f"Username: {display_user}\n"
+        f"Status: {online_str}\n"
+        f"Redaman: {rx} {rx_badge}\n"
+        f"Suhu: {temp}\n"
+        f"IP: {ip}\n"
+        f"Uptime: {uptime}\n"
+        f"Nama WiFi: {ssid}\n"
+        f"Sandi WiFi: {wifi_pass}\n"
+        f"Perangkat Terhubung: {clients} unit\n"
+        f"Model: {mfr} {model}\n"
+        f"Serial Number: {sn}"
     )
     return display_user, res, wifi_is_on
 
@@ -715,7 +710,7 @@ def get_device_clients(dev):
 def get_bad_rx_summary():
     db = get_db()
     if db is None:
-        return "❌ Gagal membuka database MongoDB."
+        return "Gagal membuka database MongoDB."
         
     bad_list = []
     cursor = db.devices.find({"VirtualParameters.RXPower": {"$exists": True}})
@@ -733,12 +728,9 @@ def get_bad_rx_summary():
         try:
             rx_val = float(str(rx_raw).replace("dBm", "").strip())
             if rx_val < -26.0 or rx_val > -5.0:
-                mfr = did.get("_Manufacturer", "")
-                model = did.get("_ProductClass", "")
                 bad_list.append({
                     "pppoe": pppoe,
                     "rx": rx_val,
-                    "model": f"{mfr} {model}".strip()
                 })
         except Exception:
             pass
@@ -746,21 +738,15 @@ def get_bad_rx_summary():
     bad_list.sort(key=lambda x: x["rx"])
     
     if not bad_list:
-        return "🎉 *SEMUA REDAMAN NORMAL!*\nTidak ditemukan modem dengan redaman kritis (seluruhnya di atas -26 dBm)."
+        return "Semua redaman normal. Tidak ditemukan modem dengan redaman kritis."
         
     lines = [
-        "⚠️ *DAFTAR MODEM REDAMAN KRITIS / DROP (< -26 dBm)*",
-        "━━━━━━━━━━━━━━━━━━━━"
+        "Daftar modem redaman kritis drop:",
     ]
     for idx, b in enumerate(bad_list[:20], start=1):
-        tag = "🔴 Kritis" if b["rx"] < -28.0 else "🟡 Waspada"
-        lines.append(f"{idx}. 👤 *{b['pppoe']}* : `{b['rx']} dBm` ({tag})")
-        if b["model"]:
-            lines.append(f"   • Perangkat: {b['model']}")
+        lines.append(f"{idx}. username {b['pppoe']}: {b['rx']} dBm")
             
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"Total bermasalah: *{len(bad_list)} pelanggan*.")
-    lines.append("👉 _Ketik `/cek <username>` untuk melihat rincian pelanggan._")
+    lines.append(f"Total: {len(bad_list)} modem bermasalah.")
     return "\n".join(lines)
 
 def get_unconfigured_onts():
@@ -1875,71 +1861,99 @@ def is_voice_reply_active(chat_id):
     cid = str(chat_id)
     return (cid in VOICE_PERSISTENT_USERS) or (cid in VOICE_SESSION_USERS)
 
+def clean_text_for_chat(text):
+    if not text:
+        return ""
+    t = str(text)
+    # 1. Hapus semua emoji dan simbol grafis
+    t = re.sub(r'[\U00010000-\U0010ffff]', '', t)
+    t = re.sub(r'[\u2600-\u27ff]', '', t)
+    t = re.sub(r'[\ufe00-\ufe0f]', '', t)
+    t = re.sub(r'[\u2500-\u257f]', '', t)
+    t = re.sub(r'[\u2580-\u259f]', '', t)
+    t = re.sub(r'[\u25a0-\u25ff]', '', t)
+    t = re.sub(r'[\u2b50\u2b55\u231a-\u231b\u23e9-\u23ec\u23f0\u23f3]', '', t)
+    t = re.sub(r'[•►▪▫■□▲△▼▽◆◇○●◎★☆✓✔✕✖✗✘⚠️🔴🟢🟡⚪⚫🔵🟣🟠⭕⛔🔘👉👈👆👇👤👥🤖📱📶🌐📊🔄🆕💳💸🏢📞🏠🌓🎉💡📌🔍🚀❓👑]', '', t)
+    # 2. Hapus garis pemisah dekoratif
+    t = re.sub(r'^[━─═\-_]{2,}$', '', t, flags=re.MULTILINE)
+    # 3. Ganti PPPoE dengan Username
+    t = re.sub(r'(?i)\bakun\s+pppoe\b', 'Username', t)
+    t = re.sub(r'(?i)\bpppoe\s+username\b', 'Username', t)
+    t = re.sub(r'(?i)\bpppoe\b', 'username', t)
+    # 4. Hapus format markdown tebal/miring/kode
+    t = re.sub(r'[*_`~#]', '', t)
+    # 5. Hapus instruksi ketik yang tidak relevan untuk asisten
+    lines = []
+    for line in t.splitlines():
+        cl = line.strip()
+        if not cl or re.match(r'^[=\-_/\\:;.,\s]+$', cl):
+            continue
+        if re.search(r'(?i)ketik\s+[/]?cek', cl) or re.search(r'(?i)format:\s*[/]?addwan', cl):
+            continue
+        lines.append(cl)
+    return '\n'.join(lines)
+
+
 def clean_text_for_speech(text):
     if not text:
         return ""
     t = str(text)
-    
-    # 1. Hapus simbol, emoji, dan markdown
-    t = re.sub(r'[*_`~#\[\]\(\)\>\+=\|{}.!?,:;/\\]', ' ', t)
+    # 1. Hapus emoji & simbol grafis
+    t = re.sub(r'[\U00010000-\U0010ffff]', ' ', t)
+    t = re.sub(r'[\u2600-\u27ff]', ' ', t)
+    t = re.sub(r'[\ufe00-\ufe0f]', ' ', t)
+    t = re.sub(r'[\u2500-\u25ff]', ' ', t)
+    t = re.sub(r'[\u2b50\u2b55\u231a-\u231b\u23e9-\u23ec\u23f0\u23f3]', ' ', t)
+    t = re.sub(r'[•►▪▫■□▲△▼▽◆◇○●◎★☆✓✔✕✖✗✘⚠️🔴🟢🟡⚪⚫🔵🟣🟠⭕⛔🔘👉👈👆👇👤👥🤖📱📶🌐📊🔄🆕💳💸🏢📞🏠🌓🎉💡📌🔍🚀❓👑]', ' ', t)
     t = re.sub(r'https?://\S+|www\.\S+', '', t)
-    t = re.sub(r'[━─═\-_]{2,}', ' ', t)
-    t = re.sub(r'[•►✔️✅❌⚠️🔔💡📌🔍🚀📶🌐📊👥🔄🆕❓💳💸🏢📞🏠👤📱🤖🌓]', ' ', t)
     t = re.sub(r'InternetGatewayDevice\.[^\s]+', 'parameter modem', t)
     
     # 2. Desimal minus agar dibaca alami
     t = re.sub(r'-(\d+)\.(\d+)', r'minus \1 koma \2', t)
     t = re.sub(r'-(\d+)', r'minus \1', t)
     
-    # 3. Ganti singkatan teknis agar dibaca alami dalam bahasa Indonesia (bukan dieja per huruf)
+    # 3. Ganti singkatan teknis agar dibaca alami dalam bahasa Indonesia
     replacements = [
-        (r'\bONU\b', 'modem'),
-        (r'\bonu\b', 'modem'),
-        (r'\bONT\b', 'modem'),
-        (r'\bont\b', 'modem'),
-        (r'\bPPPoE\b', 'pipoe'),
-        (r'\bPPPOE\b', 'pipoe'),
-        (r'\bpppoe\b', 'pipoe'),
-        (r'\bRX\s*Power\b', 'redaman'),
-        (r'\bRx\s*Power\b', 'redaman'),
-        (r'\bRX\b', 'redaman'),
-        (r'\bRx\b', 'redaman'),
-        (r'\brx\b', 'redaman'),
-        (r'\bTX\b', 'sinyal kirim'),
-        (r'\bTx\b', 'sinyal kirim'),
-        (r'\bdBm\b', 'desibel'),
-        (r'\bdbm\b', 'desibel'),
-        (r'\bSSID\b', 'nama wifi'),
-        (r'\bssid\b', 'nama wifi'),
-        (r'\bOLT\b', 'sentral optik'),
-        (r'\bolt\b', 'sentral optik'),
-        (r'\balamat\s+IP\b', 'alamat ip'),
-        (r'\bIP\b', 'ip'),
-        (r'\bSN\b', 'seri'),
-        (r'\bsn\b', 'seri'),
-        (r'\bvlan\b', 'velan'),
-        (r'\bVLAN\b', 'velan'),
-        (r'\bVlanID\b', 'velan id'),
-        (r'\bONLINE\b', 'online'),
-        (r'\bOFFLINE\b', 'offline')
+        (r'(?i)\bakun\s+pppoe\b', 'username'),
+        (r'(?i)\bpppoe\s+username\b', 'username'),
+        (r'(?i)\bpppoe\b', 'username'),
+        (r'(?i)\bpipoe\b', 'username'),
+        (r'(?i)\brx\s*power\b', 'redaman'),
+        (r'(?i)\brx\b', 'redaman'),
+        (r'(?i)\btx\b', 'sinyal kirim'),
+        (r'(?i)\bdbm\b', 'desibel'),
+        (r'(?i)\bonu\b', 'modem'),
+        (r'(?i)\bont\b', 'modem'),
+        (r'(?i)\bssid\b', 'nama wifi'),
+        (r'(?i)\bolt\b', 'sentral optik'),
+        (r'(?i)\bsn\b', 'seri'),
+        (r'(?i)\bip\s*wan\b', 'ip'),
+        (r'(?i)\balamat\s+ip\b', 'alamat ip'),
+        (r'(?i)\bvlan\b', 'velan'),
+        (r'(?i)\blos\b', 'kabel putus'),
+        (r'(?i)\bperangkat:\s*[^\n,.]+', ''),
+        (r'(?i)\b°\s*c\b', ' derajat celsius'),
+        (r'%', ' persen'),
+        (r'(?i)\(kritis\s*/?\s*drop\)', 'kritis'),
+        (r'(?i)\(sangat bagus\)', 'sangat bagus'),
+        (r'(?i)\(normal\)', 'normal'),
+        (r'(?i)\(waspada\)', 'waspada'),
+        (r'(?i)\(aktif\)', 'aktif'),
     ]
     for pattern, repl in replacements:
-        t = re.sub(pattern, repl, t, flags=re.IGNORECASE)
+        t = re.sub(pattern, repl, t)
         
-    # 4. Ubah kata yang huruf KAPITAL semua menjadi huruf kecil (agar tidak dieja per huruf oleh TTS)
-    words = []
-    for w in t.split():
-        if w.isupper() and len(w) > 1:
-            words.append(w.lower())
-        else:
-            words.append(w)
-    t = ' '.join(words)
+    # 4. Hapus tanda baca dan karakter pemformatan
+    t = re.sub(r'[*_`~#\[\]\(\)\>\+=\|{}.!?,:;/\\]', ' ', t)
     
-    # 5. Ringkas jangan terlalu detail (maksimal 25 kata)
+    # 5. SEMUA kata dijadikan huruf kecil (agar TIDAK ADA huruf kapital yang dieja satu per satu oleh TTS)
+    t = t.lower()
+    
+    # 6. Ringkas dan batasi kata agar tidak bertele-tele (maks 25 kata)
     t = re.sub(r'\s+', ' ', t).strip()
     words = t.split()
     if len(words) > 25:
-        t = ' '.join(words[:25]) + '... rincian selengkapnya sudah tampil di layar.'
+        t = ' '.join(words[:25]) + '... rincian sudah tampil di layar.'
     return t
 
 TTS_MEMORY_CACHE = {}
@@ -2527,13 +2541,10 @@ def process_agent_command(user_text, sender_id="admin", is_admin=True, gemini_ke
                 offline_devs = max(0, total_devs - online_devs)
                 pct_online = (online_devs / total_devs * 100) if total_devs > 0 else 0
                 rep = (
-                    f"📊 *REKAP KONEKSI MODEM PELANGGAN*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• *Total Modem Terdaftar:* `{total_devs} unit`\n"
-                    f"• *Modem Online Aktif:* `{online_devs} unit` ({pct_online:.1f}%)\n"
-                    f"• *Modem Offline / Mati:* `{offline_devs} unit`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"👉 _Ketik `redaman` untuk melihat modem yang redamannya kritis._"
+                    f"Rekap Koneksi Modem:\n"
+                    f"Total Modem: {total_devs} unit\n"
+                    f"Modem Online: {online_devs} unit ({pct_online:.1f}%)\n"
+                    f"Modem Offline: {offline_devs} unit"
                 )
                 return (rep, get_main_menu_keyboard())
 
@@ -5229,12 +5240,13 @@ class BotConfigHandler(BaseHTTPRequestHandler):
                 logger.error(f"Error handling voice ask: {e_cmd}")
                 reply_text = f"Terjadi kesalahan: {e_cmd}"
 
-            speech_text = clean_text_for_speech(reply_text or "")
+            clean_chat = clean_text_for_chat(reply_text or "")
+            speech_text = clean_text_for_speech(clean_chat or reply_text or "")
             self.send_json({
                 "ok": True,
-                "text": reply_text or "",
+                "text": clean_chat,
                 "speechText": speech_text,
-                "reply": reply_text or ""
+                "reply": clean_chat
             })
             return
         if path in ("/api/device/reboot", "/bot-proxy/api/device/reboot"):
