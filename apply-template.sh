@@ -43,9 +43,15 @@ if [ ! -f "$ARCHIVE" ]; then
     ARCHIVE="./genieacs_template_ui.tar.gz"
   elif [ -f "/root/genieacs_template_ui.tar.gz" ]; then
     ARCHIVE="/root/genieacs_template_ui.tar.gz"
+  elif [ -f "${SCRIPT_DIR}/genieacs_db.tar.gz" ]; then
+    ARCHIVE="${SCRIPT_DIR}/genieacs_db.tar.gz"
+  elif [ -f "./genieacs_db.tar.gz" ]; then
+    ARCHIVE="./genieacs_db.tar.gz"
+  elif [ -f "/root/genieacs_db.tar.gz" ]; then
+    ARCHIVE="/root/genieacs_db.tar.gz"
   else
-    echo -e "${RED}[ERROR] File genieacs_template_ui.tar.gz tidak ditemukan di folder ini!${NC}"
-    echo "Pastikan file genieacs_template_ui.tar.gz berada dalam satu folder dengan script ini."
+    echo -e "${RED}[ERROR] File genieacs_template_ui.tar.gz atau genieacs_db.tar.gz tidak ditemukan di folder ini!${NC}"
+    echo "Pastikan file template berada dalam satu folder dengan script ini."
     exit 1
   fi
 fi
@@ -135,6 +141,8 @@ echo -e "${BLUE}[1/3] Mengekstrak template tampilan & parameter...${NC}"
 TMP_DIR="/tmp/genieacs_template_$$"
 mkdir -p "$TMP_DIR"
 tar -xzf "$ARCHIVE" -C "$TMP_DIR"
+# Proteksi data server yang sudah jalan: jangan timpa akun user, permission, atau data perangkat
+rm -f "$TMP_DIR/genieacs/users."* "$TMP_DIR/genieacs/permissions."* "$TMP_DIR/genieacs/devices."* "$TMP_DIR/genieacs/faults."* "$TMP_DIR/genieacs/tasks."* 2>/dev/null || true
 
 echo -e "${BLUE}[2/3] Menerapkan konfigurasi UI, Virtual Parameters & Provisions...${NC}"
 echo -e "${YELLOW}Catatan: Data perangkat (devices) & akun user server ini 100% AMAN (TIDAK AKAN TERHAPUS).${NC}"
